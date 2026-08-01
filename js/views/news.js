@@ -1,6 +1,7 @@
-// 少年新闻视图：精选青少年时事（科技为主）+ 思辨问题 + AI 观点点评 + 中学生读本详情页
+// 少年新闻视图：精选青少年时事（科技为主）+ 思辨问题 + AI 观点点评 + 中学生读本详情页 + RSS 实时更新
 import { NEWS, NEWS_UPDATED } from '../data/news.js';
 import { ARTICLES } from '../data/articles.js';
+import { fetchLatestNews, loadNewsCache } from '../news-feed.js';
 import { opinionFeedback } from '../llm.js';
 import { MicBtn } from '../voice.js';
 
@@ -44,21 +45,37 @@ export default {
       elRefs: {},   // id -> textarea 元素（供语音按钮定位）
       reading: null, // 正在阅读的新闻 id（打开详情弹窗）
       thinkOpen: false, // 详情页内思辨区是否展开
+      // RSS 实时更新
+      liveNews: loadNewsCache(), // { updatedAt, items[] } 或 null
+      updating: false,
+      updateMsg: '',
     };
   },
   computed: {
-    updated() { return NEWS_UPDATED; },
+    updatedLabel() {
+      if (this.liveNews) return this.liveNews.updatedAt.slice(0, 16).replace('T', ' ');
+      return NEWS_UPDATED + '（精选）';
+    },
+    // 实时抓取的新闻在前，精选在后
+    allItems() {
+      return [...(this.liveNews ? this.liveNews.items : []), ...NEWS];
+    },
     categories() {
       const set = [];
-      for (const n of NEWS) if (!set.includes(n.category)) set.push(n.category);
+      for (const n of this.allItems) if (!set.includes(n.category)) set.push(n.category);
       return set;
     },
     items() {
-      const list = this.filter ? NEWS.filter(n => n.category === this.filter) : NEWS;
+      const list = this.filter ? this.allItems.filter(n => n.category === this.filter) : this.allItems;
       return [...list].sort((a, b) => (a.date < b.date ? 1 : -1));
     },
-    readingNews() { return NEWS.find(n => n.id === this.reading) || null; },
-    readingArticle() { return this.reading ? ARTICLES[this.reading] : null; },
+    readingNews() { return this.allItems.find(n => n.id === this.reading) || null; },
+    readingArticle() {
+      if (!this.reading || !this.readingNews) return null;
+      if (ARTICLES[this.reading]) return ARTICLES[this.reading];
+      // 实时新闻没有改写读本，用摘要生成简版详情
+      return { readMinutes: 1, stats: [], live: true, sections: [{ h: '新闻详情', ps: [this.readingNews.summary] }] };
+    },
   },
   methods: {
     color(cat) { return CATEGORY_COLORS[cat] || '#8A94A6'; },
@@ -66,9 +83,36 @@ export default {
     toggle(id) { this.open[id] = !this.open[id]; },
     setRef(id, el) { if (el) this.elRefs[id] = el; },
     openArticle(n) {
-      if (ARTICLES[n.id]) { this.reading = n.id; this.thinkOpen = false; }
+      this.reading = n.id;
+      this.thinkOpen = false;
     },
     closeArticle() { this.reading = null; },
+    // 实时新闻没有预设思辨问题，用通用问题代替
+    questionsFor(n) {
+      return n.questions || [
+        '这条新闻和我们的生活有什么关系？',
+        '这件事可能带来哪些好处，又可能带来哪些新问题？',
+      ];
+    },
+    // 「更新」按钮：经 CORS 代理抓取科技 RSS，失败时保留现有内容
+    async updateNews() {
+      if (this.updating) return;
+      this.updating = true;
+      this.updateMsg = '';
+      try {
+        const data = await fetchLatestNews();
+        if (data.items.length) {
+          this.liveNews = data;
+          this.updateMsg = `已抓取 ${data.items.length} 条最新科技新闻（来自果壳网 / Solidot / 36氪）。`;
+        } else {
+          this.updateMsg = '暂时没抓到新内容，请检查网络后稍后再试。';
+        }
+      } catch (e) {
+        this.updateMsg = '网络更新失败，已保留当前内容。';
+      } finally {
+        this.updating = false;
+      }
+    },
     // 详情页底部「思辨」：不关闭详情，直接在页内展开思辨区（观点与卡片互通）
     thinkInArticle() {
       this.thinkOpen = !this.thinkOpen;
@@ -86,7 +130,7 @@ export default {
       this.errors[n.id] = '';
       try {
         this.feedback[n.id] = await opinionFeedback({
-          title: n.title, summary: n.summary, questions: n.questions, opinion,
+          title: n.title, summary: n.summary, questions: this.questionsFor(n), opinion,
         });
       } catch (e) {
         this.errors[n.id] = e.message || String(e);
@@ -100,9 +144,13 @@ export default {
     <header class="page-header">
       <div>
         <div class="page-title">少年新闻</div>
-        <div class="page-sub">科技时事 · 精选给少年的新闻 · 更新于 {{ updated }}</div>
+        <div class="page-sub">科技时事 · 精选给少年的新闻 · 更新于 {{ updatedLabel }}</div>
       </div>
+      <button class="btn ghost news-refresh" :disabled="updating" @click="updateNews">
+        {{ updating ? '正在更新…' : '⟳ 更新' }}
+      </button>
     </header>
+    <div v-if="updateMsg" class="hint" style="margin:-10px 0 14px">{{ updateMsg }}</div>
 
     <div class="chip-row">
       <button class="chip filter" :class="{ active: !filter }" @click="filter = ''">全部</button>
@@ -115,6 +163,7 @@ export default {
     <section v-for="n in items" :key="n.id" class="card news-card" :id="'news-' + n.id">
       <div class="news-head">
         <span class="chip" :style="{ background: color(n.category) }">{{ n.category }}</span>
+        <span v-if="n.live" class="live-badge">实时</span>
         <span class="news-source">{{ n.source }} · {{ n.date }}</span>
       </div>
       <div class="news-title">{{ n.title }}</div>
@@ -128,7 +177,7 @@ export default {
       <div v-if="open[n.id]" class="news-q">
         <div class="news-q-title">想一想，议一议</div>
         <ol>
-          <li v-for="(q, i) in n.questions" :key="i">{{ q }}</li>
+          <li v-for="(q, i) in questionsFor(n)" :key="i">{{ q }}</li>
         </ol>
         <div class="opinion-box">
           <div class="input-mic-row">
@@ -159,7 +208,7 @@ export default {
           <span class="news-source">{{ readingNews.source }} · {{ readingNews.date }} · 约 {{ readingArticle.readMinutes }} 分钟读完</span>
         </div>
         <div class="article-title">{{ readingNews.title }}</div>
-        <div class="article-stats">
+        <div v-if="readingArticle.stats.length" class="article-stats">
           <div v-for="(s, i) in readingArticle.stats" :key="i" class="article-stat">
             <div class="article-stat-num">{{ s.num }}</div>
             <div class="article-stat-label">{{ s.label }}</div>
@@ -171,13 +220,13 @@ export default {
           <div v-if="sec.box" class="article-box">{{ sec.box }}</div>
         </div>
         <div class="article-foot">
-          本文由 AI 工作台编辑根据公开报道改写
+          {{ readingArticle.live ? '以下内容为实时抓取的新闻摘要' : '本文由 AI 工作台编辑根据公开报道改写' }}
           <a v-if="readingNews.url" :href="readingNews.url" target="_blank" rel="noopener">查看原始报道（{{ readingNews.source }}）↗</a>
         </div>
         <div v-if="thinkOpen" class="news-q article-think" ref="articleThink">
           <div class="news-q-title">想一想，议一议</div>
           <ol>
-            <li v-for="(q, i) in readingNews.questions" :key="i">{{ q }}</li>
+            <li v-for="(q, i) in questionsFor(readingNews)" :key="i">{{ q }}</li>
           </ol>
           <div class="opinion-box">
             <div class="input-mic-row">

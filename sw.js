@@ -1,5 +1,5 @@
 // Service Worker：缓存优先，离线可用
-const CACHE = 'study-planner-v17';
+const CACHE = 'study-planner-v18';
 
 const PRECACHE = [
   './',
@@ -17,6 +17,7 @@ const PRECACHE = [
   './js/views/plan.js',
   './js/views/stats.js',
   './js/views/news.js',
+  './js/news-feed.js',
   './js/data/news.js',
   './js/data/articles.js',
   './js/views/ai.js',
