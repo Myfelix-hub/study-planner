@@ -103,7 +103,7 @@ export default {
         const data = await fetchLatestNews();
         if (data.items.length) {
           this.liveNews = data;
-          this.updateMsg = `已抓取 ${data.items.length} 条最新科技新闻（来自果壳网 / Solidot / 36氪）。`;
+          this.updateMsg = `已抓取 ${data.items.length} 条最新科技新闻（来自 36氪 / Solidot）。`;
         } else {
           this.updateMsg = '暂时没抓到新内容，请检查网络后稍后再试。';
         }

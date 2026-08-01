@@ -1,11 +1,10 @@
-// 实时新闻源：经 CORS 代理抓取公开 RSS（科技类），单个源失败不影响其他源
+// 实时新闻源：经 rss2json 公共 API 抓取科技 RSS（36氪 / Solidot），单个源失败不影响其他源
 // 结果缓存到 localStorage，与内置精选新闻合并展示
 const FEEDS = [
-  { url: 'https://www.guokr.com/rss/', source: '果壳网' },
-  { url: 'https://www.solidot.org/index.rss', source: 'Solidot' },
   { url: 'https://36kr.com/feed', source: '36氪' },
+  { url: 'https://www.solidot.org/index.rss', source: 'Solidot' },
 ];
-const PROXY = 'https://api.allorigins.win/raw?url=';
+const API = 'https://api.rss2json.com/v1/api.json?rss_url=';
 const CACHE_KEY = 'studyPlanner.newsCache.v1';
 
 export function loadNewsCache() {
@@ -34,39 +33,20 @@ function stripHtml(s) {
   return (d.textContent || '').replace(/\s+/g, ' ').trim();
 }
 
-function textOf(node, selectors) {
-  for (const sel of selectors) {
-    const el = node.querySelector(sel);
-    if (el && el.textContent.trim()) return el.textContent.trim();
-  }
-  return '';
-}
-
-function linkOf(node) {
-  // RSS: <link>url</link>；Atom: <link href="url" />
-  const links = node.querySelectorAll('link');
-  for (const l of links) {
-    if (l.textContent.trim()) return l.textContent.trim();
-    if (l.getAttribute('href')) return l.getAttribute('href');
-  }
-  return '';
-}
-
 export async function fetchLatestNews() {
   const items = [];
   await Promise.all(FEEDS.map(async (f) => {
     try {
-      const resp = await fetch(PROXY + encodeURIComponent(f.url));
+      const resp = await fetch(API + encodeURIComponent(f.url));
       if (!resp.ok) return;
-      const xml = new DOMParser().parseFromString(await resp.text(), 'text/xml');
-      const nodes = [...xml.querySelectorAll('item, entry')].slice(0, 6);
-      for (const n of nodes) {
-        const title = stripHtml(textOf(n, ['title']));
-        const link = linkOf(n);
+      const data = await resp.json();
+      if (data.status !== 'ok' || !Array.isArray(data.items)) return;
+      for (const it of data.items.slice(0, 6)) {
+        const title = stripHtml(it.title || '');
+        const link = it.link || it.guid || '';
         if (!title || !link) continue;
-        const desc = stripHtml(textOf(n, ['description', 'summary', 'content', 'content\\:encoded'])).slice(0, 120);
-        const dateRaw = textOf(n, ['pubDate', 'published', 'updated', 'dc\\:date', 'date']);
-        const d = new Date(dateRaw);
+        const desc = stripHtml(it.description || it.content || '').slice(0, 120);
+        const d = new Date(it.pubDate || '');
         items.push({
           id: 'feed-' + btoa(unescape(encodeURIComponent(link))).replace(/[^a-zA-Z0-9]/g, '').slice(0, 24),
           title: title.slice(0, 50),
