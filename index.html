@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="blueprint">
+<head>
+  <meta charset="UTF-8">
+  <script>
+    // 主题防闪烁：样式加载前先恢复上次主题
+    try {
+      var __d = JSON.parse(localStorage.getItem('studyPlanner.v1') || '{}');
+      document.documentElement.dataset.theme = (__d.settings && __d.settings.theme) || 'blueprint';
+    } catch (e) {}
+  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <title>Jeffrey 学习工作台</title>
+  <meta name="description" content="Jeffrey 的初中学习规划与计划执行工作台">
+  <meta name="theme-color" content="#0B1120">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="preload" href="vendor/fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="app"></div>
+  <script src="vendor/vue.global.prod.js"></script>
+  <script type="module" src="js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW 注册失败', err));
+      });
+      // 新版本就绪后自动刷新，避免停留在旧缓存代码
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (refreshing) return;
+        refreshing = true;
+        location.reload();
+      });
+    }
+  </script>
+</body>
+</html>
