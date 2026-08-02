@@ -1,5 +1,5 @@
 // Service Worker：缓存优先，离线可用
-const CACHE = 'study-planner-v20';
+const CACHE = 'study-planner-v21';
 
 const PRECACHE = [
   './',

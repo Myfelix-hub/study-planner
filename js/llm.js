@@ -320,13 +320,14 @@ export async function rewriteNewsForTeens({ title, summary, source }) {
 来源媒体：${source || '公开报道'}
 
 请把这条新闻改写成适合中学生阅读的新闻详情，只输出 JSON 对象，不要输出任何其他文字或 markdown 代码块标记。
-格式：{"readMinutes":2,"stats":[{"num":"关键数字","label":"说明"}],"sections":[{"h":"小节标题","ps":["段落1","段落2"],"box":"可选的知识点小卡片"}]}
+格式：{"readMinutes":2,"stats":[{"num":"关键数字","label":"说明"}],"sections":[{"h":"小节标题","ps":["段落1","段落2"],"box":"可选的知识点小卡片"}],"questions":["思辨问题1","思辨问题2"]}
 要求：
 1. sections 为 3-4 个小节，依次覆盖：发生了什么、来龙去脉与背景、为什么重要、和我们的生活有什么关系；
 2. 每个小节 1-3 个段落，每段 60-120 字，全文 400-700 字；
 3. stats 给 0-3 个新闻中确有的关键数字，没有合适数字就给空数组 []；
 4. box 可选，用来解释一个中学生可能不懂的概念，没有就省略该字段；
-5. readMinutes 按全文长度估算（约每分钟 300 字）。`;
+5. questions 给 2-3 个紧扣这条新闻内容的思辨问题，引导初中生多角度思考（如利弊权衡、换位思考、对未来的影响），不要泛泛而谈；
+6. readMinutes 按全文长度估算（约每分钟 300 字）。`;
   const text = await chat([{ role: 'system', content: sys }, { role: 'user', content: prompt }], { maxTokens: 3000, temperature: 0.5, noThink: true });
   return parseArticleJson(text);
 }
@@ -358,6 +359,9 @@ function parseArticleJson(text) {
           ? obj.stats.filter(x => x && x.num != null).slice(0, 3).map(x => ({ num: String(x.num), label: String(x.label || '') }))
           : [],
         sections,
+        questions: Array.isArray(obj.questions)
+          ? obj.questions.filter(q => q && String(q).trim()).slice(0, 3).map(q => String(q).trim())
+          : [],
         aiRewrite: true,
       };
     } catch (_) {}

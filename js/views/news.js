@@ -136,6 +136,7 @@ export default {
           try {
             const article = await rewriteNewsForTeens({ title: n.title, summary: n.summary, source: n.source });
             n.article = article;
+            if (article.questions && article.questions.length) n.questions = article.questions;
             saveRewrittenArticle(n.id, article);
             done++;
           } catch (e) {

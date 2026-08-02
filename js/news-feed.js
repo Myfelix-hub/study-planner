@@ -98,5 +98,6 @@ export function saveRewrittenArticle(id, article) {
   const it = data.items.find(n => n.id === id);
   if (!it) return;
   it.article = article;
+  if (article.questions && article.questions.length) it.questions = article.questions;
   saveCache(data);
 }
