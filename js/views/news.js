@@ -1,8 +1,9 @@
 // 少年新闻视图：精选青少年时事（科技为主）+ 思辨问题 + AI 观点点评 + 中学生读本详情页 + RSS 实时更新
 import { NEWS, NEWS_UPDATED } from '../data/news.js';
 import { ARTICLES } from '../data/articles.js';
-import { fetchLatestNews, loadNewsCache } from '../news-feed.js';
-import { opinionFeedback } from '../llm.js';
+import { fetchLatestNews, loadNewsCache, saveRewrittenArticle } from '../news-feed.js';
+import { opinionFeedback, rewriteNewsForTeens } from '../llm.js';
+import { store } from '../storage.js';
 import { MicBtn } from '../voice.js';
 
 const CATEGORY_COLORS = {
@@ -46,9 +47,10 @@ export default {
       reading: null, // 正在阅读的新闻 id（打开详情弹窗）
       thinkOpen: false, // 详情页内思辨区是否展开
       // RSS 实时更新
-      liveNews: loadNewsCache(), // { updatedAt, items[] } 或 null
+      liveNews: loadNewsCache(), // { updatedAt, items[] } 或 null；item.article 为 AI 改写读本
       updating: false,
       updateMsg: '',
+      rewriting: {}, // id -> AI 读本是否改写中
     };
   },
   computed: {
@@ -73,7 +75,11 @@ export default {
     readingArticle() {
       if (!this.reading || !this.readingNews) return null;
       if (ARTICLES[this.reading]) return ARTICLES[this.reading];
-      // 实时新闻没有改写读本，用摘要生成简版详情
+      // 实时新闻：优先用 AI 工作台改写的读本
+      if (this.readingNews.article) return this.readingNews.article;
+      // 改写进行中：显示加载提示
+      if (this.rewriting[this.reading]) return { loading: true, readMinutes: 0, stats: [], sections: [] };
+      // 改写未完成或不可用：用摘要兜底
       return { readMinutes: 1, stats: [], live: true, sections: [{ h: '新闻详情', ps: [this.readingNews.summary] }] };
     },
   },
@@ -104,6 +110,7 @@ export default {
         if (data.items.length) {
           this.liveNews = data;
           this.updateMsg = `已抓取 ${data.items.length} 条最新科技新闻（来自 36氪 / Solidot）。`;
+          this.rewriteLiveNews();
         } else {
           this.updateMsg = '暂时没抓到新内容，请检查网络后稍后再试。';
         }
@@ -112,6 +119,38 @@ export default {
       } finally {
         this.updating = false;
       }
+    },
+    // 抓取成功后立即把每条实时新闻改写成中学生读本（并发 3，单条失败保留摘要兜底）
+    async rewriteLiveNews() {
+      if (!this.liveNews) return;
+      if (!store.settings.apiKey) {
+        this.updateMsg += ' 未配置 API Key，详情暂显示原始摘要；到「设置」页配置后重新更新即可生成 AI 改写版。';
+        return;
+      }
+      const queue = this.liveNews.items.filter(n => !n.article);
+      let done = 0, failed = 0;
+      const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
+        while (queue.length) {
+          const n = queue.shift();
+          this.rewriting[n.id] = true;
+          try {
+            const article = await rewriteNewsForTeens({ title: n.title, summary: n.summary, source: n.source });
+            n.article = article;
+            saveRewrittenArticle(n.id, article);
+            done++;
+          } catch (e) {
+            failed++;
+          } finally {
+            this.rewriting[n.id] = false;
+          }
+        }
+      });
+      if (!workers.length) return;
+      this.updateMsg += ' AI 工作台正在改写新闻详情…';
+      await Promise.all(workers);
+      this.updateMsg = failed
+        ? `新闻详情改写完成 ${done} 条，失败 ${failed} 条（失败条目显示原始摘要）。`
+        : `${done} 条新闻详情已由 AI 工作台改写完成，适合中学生阅读。`;
     },
     // 详情页底部「思辨」：不关闭详情，直接在页内展开思辨区（观点与卡片互通）
     thinkInArticle() {
@@ -205,9 +244,10 @@ export default {
         <div class="article-banner" :style="{ color: color(readingNews.category) }" v-html="banner(readingNews.category)"></div>
         <div class="news-head">
           <span class="chip" :style="{ background: color(readingNews.category) }">{{ readingNews.category }}</span>
-          <span class="news-source">{{ readingNews.source }} · {{ readingNews.date }} · 约 {{ readingArticle.readMinutes }} 分钟读完</span>
+          <span class="news-source">{{ readingNews.source }} · {{ readingNews.date }}{{ readingArticle.loading ? ' · AI 改写中' : ' · 约 ' + readingArticle.readMinutes + ' 分钟读完' }}</span>
         </div>
         <div class="article-title">{{ readingNews.title }}</div>
+        <div v-if="readingArticle.loading" class="hint" style="padding:18px 0">AI 工作台正在根据公开报道改写这条新闻的详情，完成后会自动显示…</div>
         <div v-if="readingArticle.stats.length" class="article-stats">
           <div v-for="(s, i) in readingArticle.stats" :key="i" class="article-stat">
             <div class="article-stat-num">{{ s.num }}</div>
@@ -220,7 +260,7 @@ export default {
           <div v-if="sec.box" class="article-box">{{ sec.box }}</div>
         </div>
         <div class="article-foot">
-          {{ readingArticle.live ? '以下内容为实时抓取的新闻摘要' : '本文由 AI 工作台编辑根据公开报道改写' }}
+          {{ readingArticle.live ? '以下内容为实时抓取的新闻摘要' : (readingArticle.loading ? '' : '本文由 AI 工作台编辑根据公开报道改写') }}
           <a v-if="readingNews.url" :href="readingNews.url" target="_blank" rel="noopener">查看原始报道（{{ readingNews.source }}）↗</a>
         </div>
         <div v-if="thinkOpen" class="news-q article-think" ref="articleThink">

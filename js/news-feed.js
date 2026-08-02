@@ -33,6 +33,20 @@ function stripHtml(s) {
   return (d.textContent || '').replace(/\s+/g, ' ').trim();
 }
 
+// 用完整链接做哈希生成 id（旧版截取 base64 前缀，同站点链接前缀相同，大量 id 撞车，
+// 导致「阅读详情」按 id 查找时命中别的新闻）
+function linkHash(s) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36);
+}
+
 export async function fetchLatestNews() {
   const items = [];
   await Promise.all(FEEDS.map(async (f) => {
@@ -48,7 +62,7 @@ export async function fetchLatestNews() {
         const desc = stripHtml(it.description || it.content || '').slice(0, 120);
         const d = new Date(it.pubDate || '');
         items.push({
-          id: 'feed-' + btoa(unescape(encodeURIComponent(link))).replace(/[^a-zA-Z0-9]/g, '').slice(0, 24),
+          id: 'feed-' + linkHash(link),
           title: title.slice(0, 50),
           summary: desc || title,
           source: f.source,
@@ -62,15 +76,27 @@ export async function fetchLatestNews() {
       // 网络或单个源失败：跳过，不影响其他源
     }
   }));
-  // 按日期倒序 + 按链接去重
+  // 按日期倒序 + 按链接/id 去重
   const seen = new Set();
+  const seenIds = new Set();
   const out = [];
   for (const it of items.sort((a, b) => (a.date < b.date ? 1 : -1))) {
-    if (seen.has(it.url)) continue;
+    if (seen.has(it.url) || seenIds.has(it.id)) continue;
     seen.add(it.url);
+    seenIds.add(it.id);
     out.push(it);
   }
   const data = { updatedAt: new Date().toISOString(), items: out.slice(0, 20) };
   saveCache(data);
   return data;
+}
+
+// 把 AI 改写好的中学生读本写回缓存（按 id 找到条目），下次打开直接用
+export function saveRewrittenArticle(id, article) {
+  const data = loadNewsCache();
+  if (!data) return;
+  const it = data.items.find(n => n.id === id);
+  if (!it) return;
+  it.article = article;
+  saveCache(data);
 }

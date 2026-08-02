@@ -309,3 +309,58 @@ ${opinion}
 4. 直接对孩子说话，控制在 250 字以内，不用 markdown 标题。`;
   return chat([{ role: 'system', content: sys }, { role: 'user', content: prompt }], { maxTokens: 1200, temperature: 0.7, noThink: true });
 }
+
+// 能力五：把实时新闻改写成适合中学生阅读的详情读本（返回结构化对象，结构与 ARTICLES 一致）
+export async function rewriteNewsForTeens({ title, summary, source }) {
+  const sys = '你是「少年新闻」栏目的资深编辑，擅长把科技时事改写成适合初中生阅读的新闻读本。' +
+    '改写基于新闻标题、摘要和你掌握的公开报道常识，语言准确、通俗、客观；' +
+    '不得编造具体数据、人名、引语，没有把握的细节宁可不写。';
+  const prompt = `新闻标题：${title}
+新闻摘要：${summary}
+来源媒体：${source || '公开报道'}
+
+请把这条新闻改写成适合中学生阅读的新闻详情，只输出 JSON 对象，不要输出任何其他文字或 markdown 代码块标记。
+格式：{"readMinutes":2,"stats":[{"num":"关键数字","label":"说明"}],"sections":[{"h":"小节标题","ps":["段落1","段落2"],"box":"可选的知识点小卡片"}]}
+要求：
+1. sections 为 3-4 个小节，依次覆盖：发生了什么、来龙去脉与背景、为什么重要、和我们的生活有什么关系；
+2. 每个小节 1-3 个段落，每段 60-120 字，全文 400-700 字；
+3. stats 给 0-3 个新闻中确有的关键数字，没有合适数字就给空数组 []；
+4. box 可选，用来解释一个中学生可能不懂的概念，没有就省略该字段；
+5. readMinutes 按全文长度估算（约每分钟 300 字）。`;
+  const text = await chat([{ role: 'system', content: sys }, { role: 'user', content: prompt }], { maxTokens: 3000, temperature: 0.5, noThink: true });
+  return parseArticleJson(text);
+}
+
+// 容错解析 AI 返回的读本 JSON 对象
+function parseArticleJson(text) {
+  const t = String(text || '');
+  const candidates = [];
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) candidates.push(fence[1]);
+  candidates.push(t);
+  for (const c of candidates) {
+    const s = c.indexOf('{'), e = c.lastIndexOf('}');
+    if (s < 0 || e <= s) continue;
+    try {
+      const obj = JSON.parse(c.slice(s, e + 1));
+      if (!obj || !Array.isArray(obj.sections)) continue;
+      const sections = obj.sections
+        .filter(sec => sec && Array.isArray(sec.ps) && sec.ps.length)
+        .map(sec => ({
+          h: String(sec.h || ''),
+          ps: sec.ps.map(p => String(p)),
+          ...(sec.box ? { box: String(sec.box) } : {}),
+        }));
+      if (!sections.length) continue;
+      return {
+        readMinutes: Math.min(10, Math.max(1, Number(obj.readMinutes) || 2)),
+        stats: Array.isArray(obj.stats)
+          ? obj.stats.filter(x => x && x.num != null).slice(0, 3).map(x => ({ num: String(x.num), label: String(x.label || '') }))
+          : [],
+        sections,
+        aiRewrite: true,
+      };
+    } catch (_) {}
+  }
+  throw new Error('AI 改写返回内容无法识别。');
+}
